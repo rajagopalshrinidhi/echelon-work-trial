@@ -11,9 +11,19 @@ const PORT = 80;
 const DB_PATH = path.join(__dirname, 'data.db');
 const SITES_DIR = path.join(__dirname, 'sites');
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const LOGS_DIR = path.join(__dirname, 'logs');
 
 fs.mkdirSync(SITES_DIR, { recursive: true });
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+fs.mkdirSync(LOGS_DIR, { recursive: true });
+
+const logStream = fs.createWriteStream(path.join(LOGS_DIR, 'app.log'), { flags: 'a' });
+
+function log(level, msg, extra = {}) {
+  const line = JSON.stringify({ ts: new Date().toISOString(), level, msg, ...extra });
+  logStream.write(line + '\n');
+  console.log(line);
+}
 
 const db = new DatabaseSync(DB_PATH);
 db.exec(`
@@ -36,6 +46,12 @@ const uploadDisk = multer({ dest: path.join(__dirname, 'tmp') });
 
 app.use(express.json());
 
+// Request logging
+app.use((req, res, next) => {
+  res.on('finish', () => log('info', 'request', { method: req.method, url: req.url, status: res.statusCode }));
+  next();
+});
+
 // Serve admin UI
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -53,6 +69,7 @@ app.post('/_api/sites/:name', uploadMemory.array('files'), async (req, res) => {
   const files = req.files;
 
   if (!files || files.length === 0) {
+    log('warn', 'publish failed — no files', { site: name });
     return res.status(400).json({ ok: false, error: 'No files uploaded' });
   }
 
@@ -99,6 +116,15 @@ app.post('/_api/sites/:name', uploadMemory.array('files'), async (req, res) => {
     ON CONFLICT(name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
   `).run(name);
 
+  // If no index.html was uploaded but exactly one HTML file was, create index.html from it
+  const written = fs.readdirSync(siteDir);
+  const hasIndex = written.includes('index.html');
+  const htmlFiles = written.filter(f => f.endsWith('.html'));
+  if (!hasIndex && htmlFiles.length === 1) {
+    fs.copyFileSync(path.join(siteDir, htmlFiles[0]), path.join(siteDir, 'index.html'));
+  }
+
+  log('info', 'site published', { site: name, files: files.map(f => f.originalname) });
   res.json({ ok: true, url: `/${name}/` });
 });
 
@@ -158,5 +184,5 @@ app.use('/:name', (req, res, next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Echelon publish server running on port ${PORT}`);
+  log('info', `server started on port ${PORT}`);
 });

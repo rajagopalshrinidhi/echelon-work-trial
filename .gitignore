@@ -3,3 +3,4 @@ app/data.db
 app/sites/
 app/uploads/
 app/tmp/
+app/logs/

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Report Submission</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; padding: 2rem; max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+    .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 2rem; }
+    h2 { font-size: 1.1rem; margin-bottom: 1rem; }
+    .card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 1.5rem; margin-bottom: 2rem; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem; color: #444; }
+    input[type="text"], textarea {
+      width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #ccc;
+      border-radius: 6px; font-size: 0.9rem; margin-bottom: 1rem; font-family: inherit;
+    }
+    textarea { min-height: 80px; resize: vertical; }
+    .file-drop {
+      border: 2px dashed #ccc; border-radius: 8px; padding: 1.5rem;
+      text-align: center; cursor: pointer; margin-bottom: 1rem;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .file-drop:hover, .file-drop.dragover { border-color: #1a1a1a; background: #fafafa; }
+    .file-drop input { display: none; }
+    .file-drop .hint { font-size: 0.85rem; color: #888; }
+    .file-drop .selected { font-size: 0.9rem; font-weight: 600; color: #1a1a1a; margin-top: 0.25rem; }
+    button {
+      background: #1a1a1a; color: #fff; border: none; border-radius: 6px;
+      padding: 0.55rem 1.25rem; font-size: 0.9rem; cursor: pointer;
+    }
+    button:hover { background: #333; }
+    button:disabled { background: #999; cursor: default; }
+    #status { margin-top: 0.75rem; font-size: 0.85rem; }
+    #status.ok { color: #1a7a1a; }
+    #status.err { color: #b00; }
+
+    .entry { border-bottom: 1px solid #f0f0f0; padding: 1rem 0; }
+    .entry:last-child { border-bottom: none; }
+    .entry-meta { font-size: 0.8rem; color: #888; margin-bottom: 0.4rem; }
+    .entry-name { font-weight: 600; color: #222; }
+    .entry-comment { font-size: 0.95rem; margin-bottom: 0.5rem; white-space: pre-wrap; }
+    .entry-file img { max-width: 100%; max-height: 300px; border-radius: 6px; border: 1px solid #eee; display: block; }
+    .entry-file a { font-size: 0.85rem; color: #1a5fb4; text-decoration: none; }
+    .entry-file a:hover { text-decoration: underline; }
+    .entry-file iframe { width: 100%; height: 400px; border: 1px solid #ddd; border-radius: 6px; }
+    .empty { color: #888; font-size: 0.9rem; padding: 0.5rem 0; }
+    .upload-progress { font-size: 0.85rem; color: #888; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Report Submission</h1>
+  <p class="subtitle">Submit a report with an optional file attachment.</p>
+
+  <div class="card">
+    <h2>New Submission</h2>
+    <label for="name">Your name</label>
+    <input type="text" id="name" placeholder="Jane Smith" autocomplete="off">
+
+    <label for="comment">Comment or description</label>
+    <textarea id="comment" placeholder="Describe your report…"></textarea>
+
+    <label>Attachment <span style="font-weight:normal;color:#888">(optional — image, PDF, or any file)</span></label>
+    <div class="file-drop" id="drop-zone">
+      <input type="file" id="file-input">
+      <div class="hint">Click to choose a file, or drag and drop here</div>
+      <div class="selected" id="file-name-display"></div>
+    </div>
+
+    <button id="submit-btn">Submit</button>
+    <div id="status"></div>
+  </div>
+
+  <div class="card">
+    <h2>Submissions</h2>
+    <div id="submissions-container"><p class="empty">Loading…</p></div>
+  </div>
+
+  <script>
+    const SITE = 'upload-demo';
+
+    // Each page load gets its own submission ID — groups this user's files together
+    const submissionId = crypto.randomUUID();
+
+    // --- File drop zone ---
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const fileNameDisplay = document.getElementById('file-name-display');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      if (e.dataTransfer.files[0]) {
+        fileInput.files = e.dataTransfer.files;
+        fileNameDisplay.textContent = e.dataTransfer.files[0].name;
+      }
+    });
+
+    fileInput.addEventListener('change', () => {
+      fileNameDisplay.textContent = fileInput.files[0] ? fileInput.files[0].name : '';
+    });
+
+    // --- Submit ---
+    document.getElementById('submit-btn').addEventListener('click', async () => {
+      const name = document.getElementById('name').value.trim();
+      const comment = document.getElementById('comment').value.trim();
+      if (!name) { showStatus('Enter your name.', false); return; }
+      if (!comment) { showStatus('Enter a comment.', false); return; }
+
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      showStatus('Submitting…', null);
+
+      let fileUrl = null;
+      let fileName = null;
+      let fileType = null;
+
+      if (fileInput.files[0]) {
+        const file = fileInput.files[0];
+        showStatus('Uploading attachment…', null);
+        const fd = new FormData();
+        fd.append('file', file);
+        try {
+          const res = await fetch(`/_api/files/${SITE}?folder=${submissionId}`, {
+            method: 'POST', body: fd
+          }).then(r => r.json());
+          fileUrl = res.url;
+          fileName = file.name;
+          fileType = file.type;
+        } catch (e) {
+          showStatus('File upload failed: ' + e.message, false);
+          btn.disabled = false;
+          return;
+        }
+      }
+
+      try {
+        await fetch(`/_api/data/${SITE}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, comment, fileUrl, fileName, fileType, submissionId })
+        });
+        document.getElementById('name').value = '';
+        document.getElementById('comment').value = '';
+        fileInput.value = '';
+        fileNameDisplay.textContent = '';
+        showStatus('Submitted!', true);
+        loadSubmissions();
+      } catch (e) {
+        showStatus('Submit failed: ' + e.message, false);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    function showStatus(msg, ok) {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = ok === true ? 'ok' : ok === false ? 'err' : '';
+    }
+
+    // --- Load submissions ---
+    async function loadSubmissions() {
+      const container = document.getElementById('submissions-container');
+      try {
+        const entries = await fetch(`/_api/data/${SITE}`).then(r => r.json());
+        if (!entries.length) {
+          container.innerHTML = '<p class="empty">No submissions yet.</p>';
+          return;
+        }
+        container.innerHTML = [...entries].reverse().map(renderEntry).join('');
+      } catch (e) {
+        container.innerHTML = '<p class="empty">Failed to load submissions.</p>';
+      }
+    }
+
+    function renderEntry(entry) {
+      const date = new Date(entry.created_at).toLocaleString();
+      let fileHtml = '';
+
+      if (entry.fileUrl) {
+        const type = (entry.fileType || '').toLowerCase();
+        const name = entry.fileName || 'attachment';
+        const url = entry.fileUrl;
+
+        if (type.startsWith('image/')) {
+          fileHtml = `<div class="entry-file"><img src="${url}" alt="${escHtml(name)}"></div>`;
+        } else if (type === 'application/pdf' || name.toLowerCase().endsWith('.pdf')) {
+          fileHtml = `<div class="entry-file"><iframe src="${url}" title="${escHtml(name)}"></iframe></div>`;
+        } else {
+          fileHtml = `<div class="entry-file"><a href="${url}" target="_blank">&#128206; ${escHtml(name)}</a></div>`;
+        }
+      }
+
+      return `
+        <div class="entry">
+          <div class="entry-meta">
+            <span class="entry-name">${escHtml(entry.name)}</span> &middot; ${escHtml(date)}
+          </div>
+          <div class="entry-comment">${escHtml(entry.comment)}</div>
+          ${fileHtml}
+        </div>`;
+    }
+
+    function escHtml(str) {
+      return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    loadSubmissions();
+  </script>
+</body>
+</html>

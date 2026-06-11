@@ -172,21 +172,28 @@ app.put('/_api/state/:site', (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /_api/files/:site — upload a file
+// POST /_api/files/:site?folder=<id> — upload a file, optional subfolder for grouping
 app.post('/_api/files/:site', uploadDisk.single('file'), (req, res) => {
   const { site } = req.params;
   if (!req.file) return res.status(400).json({ ok: false, error: 'No file uploaded' });
 
-  const siteUploadsDir = path.join(UPLOADS_DIR, site);
+  // folder must be alphanumeric/dash/underscore only — prevents path traversal
+  const raw = req.query.folder || '';
+  const folder = /^[a-zA-Z0-9_-]+$/.test(raw) ? raw : null;
+
+  const siteUploadsDir = folder
+    ? path.join(UPLOADS_DIR, site, folder)
+    : path.join(UPLOADS_DIR, site);
   fs.mkdirSync(siteUploadsDir, { recursive: true });
 
-  const timestamp = Date.now();
-  const filename = `${timestamp}-${req.file.originalname}`;
+  const filename = `${Date.now()}-${req.file.originalname}`;
   const destPath = path.join(siteUploadsDir, filename);
-
   fs.renameSync(req.file.path, destPath);
 
-  res.json({ url: `/uploads/${site}/${filename}` });
+  const url = folder
+    ? `/uploads/${site}/${folder}/${filename}`
+    : `/uploads/${site}/${filename}`;
+  res.json({ url });
 });
 
 // GET /:name/... — serve published site, track visits on root

@@ -4,3 +4,7 @@ app/sites/
 app/uploads/
 app/tmp/
 app/logs/
+.DS_Store
+to-do.md
+todo.md
+examples/upload-demo/istockphoto-1973365581-612x612.jpg

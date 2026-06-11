@@ -139,6 +139,17 @@ app.get('/_api/sites', (req, res) => {
   res.json(rows);
 });
 
+// DELETE /_api/sites/:name — remove a site and all its data
+app.delete('/_api/sites/:name', (req, res) => {
+  const { name } = req.params;
+  const siteDir = path.join(SITES_DIR, name);
+  if (fs.existsSync(siteDir)) fs.rmSync(siteDir, { recursive: true, force: true });
+  db.prepare('DELETE FROM sites WHERE name = ?').run(name);
+  db.prepare('DELETE FROM state WHERE site = ?').run(name);
+  log('info', 'site deleted', { site: name });
+  res.json({ ok: true });
+});
+
 // POST /_api/data/:site — save a data entry
 app.post('/_api/data/:site', (req, res) => {
   const { site } = req.params;

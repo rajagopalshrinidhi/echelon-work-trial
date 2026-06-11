@@ -20,12 +20,15 @@
     .file-drop {
       border: 2px dashed #ccc; border-radius: 8px; padding: 1.5rem;
       text-align: center; cursor: pointer; margin-bottom: 1rem;
-      transition: border-color 0.15s, background 0.15s;
+      transition: border-color 0.15s, background 0.15s; display: block;
     }
     .file-drop:hover, .file-drop.dragover { border-color: #1a1a1a; background: #fafafa; }
-    .file-drop input { display: none; }
+    .file-drop.has-file { border-color: #1a7a1a; background: #f6fff6; cursor: default; }
     .file-drop .hint { font-size: 0.85rem; color: #888; }
-    .file-drop .selected { font-size: 0.9rem; font-weight: 600; color: #1a1a1a; margin-top: 0.25rem; }
+    .file-drop .selected { font-size: 0.9rem; font-weight: 600; color: #1a7a1a; margin-top: 0.25rem; display: block; }
+    .file-drop .uploading { font-size: 0.85rem; color: #888; margin-top: 0.25rem; display: block; }
+    #file-preview { max-width: 100%; max-height: 200px; border-radius: 6px; border: 1px solid #eee; margin-top: 0.75rem; display: none; }
+    #file-clear { font-size: 0.8rem; color: #888; text-decoration: underline; cursor: pointer; background: none; border: none; padding: 0; margin-top: 0.25rem; display: none; }
     button {
       background: #1a1a1a; color: #fff; border: none; border-radius: 6px;
       padding: 0.55rem 1.25rem; font-size: 0.9rem; cursor: pointer;
@@ -62,11 +65,14 @@
     <textarea id="comment" placeholder="Describe your report…"></textarea>
 
     <label>Attachment <span style="font-weight:normal;color:#888">(optional — image, PDF, or any file)</span></label>
-    <div class="file-drop" id="drop-zone">
-      <input type="file" id="file-input">
-      <div class="hint">Click to choose a file, or drag and drop here</div>
-      <div class="selected" id="file-name-display"></div>
-    </div>
+    <label class="file-drop" id="drop-zone">
+      <input type="file" id="file-input" style="display:none">
+      <span class="hint" id="drop-hint">Click to choose a file, or drag and drop here</span>
+      <span class="uploading" id="upload-progress"></span>
+      <span class="selected" id="file-name-display"></span>
+      <img id="file-preview" alt="preview">
+    </label>
+    <button type="button" id="file-clear" onclick="clearFile()">✕ Remove file</button>
 
     <button id="submit-btn">Submit</button>
     <div id="status"></div>
@@ -79,31 +85,81 @@
 
   <script>
     const SITE = 'upload-demo';
+    // crypto.randomUUID() is HTTPS-only; this works on plain HTTP too
+    const submissionId = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : Date.now().toString(36) + Math.random().toString(36).slice(2);
 
-    // Each page load gets its own submission ID — groups this user's files together
-    const submissionId = crypto.randomUUID();
-
-    // --- File drop zone ---
     const dropZone = document.getElementById('drop-zone');
     const fileInput = document.getElementById('file-input');
     const fileNameDisplay = document.getElementById('file-name-display');
+    const uploadProgress = document.getElementById('upload-progress');
+    const filePreview = document.getElementById('file-preview');
+    const fileClear = document.getElementById('file-clear');
+    const dropHint = document.getElementById('drop-hint');
 
-    dropZone.addEventListener('click', () => fileInput.click());
+    let uploadedFile = null; // { url, name, type } — set after immediate upload
 
+    // --- File drop zone ---
     dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
     dropZone.addEventListener('drop', e => {
       e.preventDefault();
       dropZone.classList.remove('dragover');
-      if (e.dataTransfer.files[0]) {
-        fileInput.files = e.dataTransfer.files;
-        fileNameDisplay.textContent = e.dataTransfer.files[0].name;
-      }
+      if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
     });
 
     fileInput.addEventListener('change', () => {
-      fileNameDisplay.textContent = fileInput.files[0] ? fileInput.files[0].name : '';
+      if (fileInput.files[0]) handleFile(fileInput.files[0]);
     });
+
+    async function handleFile(file) {
+      // Show immediate feedback
+      dropHint.style.display = 'none';
+      fileNameDisplay.textContent = '';
+      uploadProgress.textContent = 'Uploading ' + file.name + '…';
+      dropZone.classList.add('has-file');
+      fileClear.style.display = 'inline';
+
+      // Show image preview immediately from local file
+      if (file.type.startsWith('image/')) {
+        filePreview.src = URL.createObjectURL(file);
+        filePreview.style.display = 'block';
+      } else {
+        filePreview.style.display = 'none';
+      }
+
+      // Upload right away
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const res = await fetch(`/_api/files/${SITE}?folder=${submissionId}`, {
+          method: 'POST', body: fd
+        }).then(r => r.json());
+        uploadedFile = { url: res.url, name: file.name, type: file.type };
+        uploadProgress.textContent = '';
+        fileNameDisplay.textContent = '✓ ' + file.name;
+      } catch (e) {
+        uploadProgress.textContent = '';
+        fileNameDisplay.textContent = 'Upload failed — try again';
+        fileNameDisplay.style.color = '#b00';
+        dropZone.classList.remove('has-file');
+        uploadedFile = null;
+      }
+    }
+
+    function clearFile() {
+      uploadedFile = null;
+      fileInput.value = '';
+      fileNameDisplay.textContent = '';
+      fileNameDisplay.style.color = '';
+      uploadProgress.textContent = '';
+      filePreview.style.display = 'none';
+      filePreview.src = '';
+      dropZone.classList.remove('has-file');
+      fileClear.style.display = 'none';
+      dropHint.style.display = '';
+    }
 
     // --- Submit ---
     document.getElementById('submit-btn').addEventListener('click', async () => {
@@ -116,39 +172,20 @@
       btn.disabled = true;
       showStatus('Submitting…', null);
 
-      let fileUrl = null;
-      let fileName = null;
-      let fileType = null;
-
-      if (fileInput.files[0]) {
-        const file = fileInput.files[0];
-        showStatus('Uploading attachment…', null);
-        const fd = new FormData();
-        fd.append('file', file);
-        try {
-          const res = await fetch(`/_api/files/${SITE}?folder=${submissionId}`, {
-            method: 'POST', body: fd
-          }).then(r => r.json());
-          fileUrl = res.url;
-          fileName = file.name;
-          fileType = file.type;
-        } catch (e) {
-          showStatus('File upload failed: ' + e.message, false);
-          btn.disabled = false;
-          return;
-        }
-      }
-
       try {
         await fetch(`/_api/data/${SITE}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, comment, fileUrl, fileName, fileType, submissionId })
+          body: JSON.stringify({
+            name, comment, submissionId,
+            fileUrl: uploadedFile?.url ?? null,
+            fileName: uploadedFile?.name ?? null,
+            fileType: uploadedFile?.type ?? null
+          })
         });
         document.getElementById('name').value = '';
         document.getElementById('comment').value = '';
-        fileInput.value = '';
-        fileNameDisplay.textContent = '';
+        clearFile();
         showStatus('Submitted!', true);
         loadSubmissions();
       } catch (e) {

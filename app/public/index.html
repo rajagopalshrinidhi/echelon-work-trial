@@ -31,6 +31,11 @@
     tr:last-child td { border-bottom: none; }
     a { color: #1a5fb4; text-decoration: none; }
     a:hover { text-decoration: underline; }
+    .delete-btn {
+      background: none; border: none; color: #bbb; cursor: pointer;
+      font-size: 1rem; padding: 0 0.25rem; line-height: 1;
+    }
+    .delete-btn:hover { color: #b00; }
     .empty { color: #888; font-size: 0.9rem; padding: 1rem 0; }
     details { margin-top: 1.5rem; }
     summary { cursor: pointer; font-size: 0.9rem; font-weight: 600; color: #444; margin-bottom: 0.75rem; }
@@ -128,15 +133,22 @@ Use the data API above instead.</code></pre>
             <td>${fmtDate(s.created_at)}</td>
             <td>${fmtDate(s.updated_at)}</td>
             <td>${s.visit_count}</td>
+            <td><button class="delete-btn" title="Delete site" onclick="deleteSite('${s.name}')">✕</button></td>
           </tr>`).join('');
         container.innerHTML = `
           <table>
-            <thead><tr><th>Name</th><th>Created</th><th>Updated</th><th>Visits</th></tr></thead>
+            <thead><tr><th>Name</th><th>Created</th><th>Updated</th><th>Visits</th><th></th></tr></thead>
             <tbody>${rows}</tbody>
           </table>`;
       } catch (e) {
         container.innerHTML = '<p class="empty">Failed to load sites.</p>';
       }
+    }
+
+    async function deleteSite(name) {
+      if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+      await fetch(`/_api/sites/${encodeURIComponent(name)}`, { method: 'DELETE' });
+      loadSites();
     }
 
     function fmtDate(iso) {

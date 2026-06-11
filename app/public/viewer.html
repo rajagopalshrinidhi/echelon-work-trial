@@ -30,12 +30,6 @@
     .save-status.unsaved { color: #c08000; }
     .save-status.saving  { color: #888; }
     .save-status.saved   { color: #1a7a1a; }
-    button {
-      background: #1a1a1a; color: #fff; border: none; border-radius: 6px;
-      padding: 0.5rem 1.25rem; font-size: 0.9rem; cursor: pointer;
-    }
-    button:hover { background: #333; }
-    button:disabled { background: #999; cursor: default; }
   </style>
 </head>
 <body>
@@ -49,7 +43,6 @@
 
   <div class="bottombar">
     <span class="save-status" id="save-status"></span>
-    <button id="save-btn">Save</button>
   </div>
 
   <script>
@@ -112,13 +105,6 @@
       }
     }
 
-    saveBtn.addEventListener('click', async () => {
-      clearTimeout(saveTimer);
-      saveBtn.disabled = true;
-      await doSave();
-      saveBtn.disabled = false;
-    });
-
     function captureState(doc) {
       const state = {};
       doc.querySelectorAll('input, textarea, select').forEach((el, i) => {
@@ -134,6 +120,7 @@
 
     function applyState(doc, state) {
       doc.querySelectorAll('input, textarea, select').forEach((el, i) => {
+        if (el.type === 'file') return; // browsers disallow setting file input values
         const key = el.name || el.id || '_f' + i;
         if (!(key in state)) return;
         if (el.type === 'checkbox' || el.type === 'radio') {

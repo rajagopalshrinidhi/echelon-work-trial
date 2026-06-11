@@ -49,6 +49,15 @@
     summary { cursor: pointer; font-size: 0.9rem; font-weight: 600; color: #444; margin-bottom: 0.75rem; }
     pre { background: #f8f8f8; border: 1px solid #e0e0e0; border-radius: 6px; padding: 1rem; font-size: 0.8rem; overflow-x: auto; white-space: pre-wrap; }
     code { font-family: 'SF Mono', Menlo, monospace; }
+    .mode-desc { font-size: 0.8rem; color: #666; margin-bottom: 1rem; min-height: 1.2em; }
+    .badge {
+      display: inline-block; font-size: 0.72rem; font-weight: 600; padding: 0.15rem 0.45rem;
+      border-radius: 10px; vertical-align: middle;
+    }
+    .badge-shared { background: #e8f4ff; color: #1a5fb4; }
+    .badge-individual { background: #fff3e0; color: #b45309; }
+    .visitors-link { font-size: 0.85rem; color: #1a5fb4; text-decoration: none; }
+    .visitors-link:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -63,6 +72,12 @@
       <button type="button" class="mode-btn active" id="tab-files" onclick="setPublishMode('files')">Files</button>
       <button type="button" class="mode-btn" id="tab-folder" onclick="setPublishMode('folder')">Folder</button>
     </div>
+    <label style="margin-top:0.75rem">Site mode</label>
+    <div class="mode-toggle">
+      <button type="button" class="mode-btn active" id="mode-shared" onclick="setSiteMode('shared')">Shared</button>
+      <button type="button" class="mode-btn" id="mode-individual" onclick="setSiteMode('individual')">Individual</button>
+    </div>
+    <p class="mode-desc" id="mode-desc">All visitors contribute to the same state — good for dashboards and collaborative forms.</p>
     <div id="input-files">
       <label for="site-files">Files (HTML, CSS, JS, images — or a single .zip)</label>
       <input type="file" id="site-files" multiple>
@@ -103,6 +118,7 @@ Use the data API above instead.</code></pre>
     const publishBtn = document.getElementById('publish-btn');
     const statusEl = document.getElementById('publish-status');
     let publishMode = 'files';
+    let siteMode = 'shared';
 
     function setPublishMode(mode) {
       publishMode = mode;
@@ -110,6 +126,15 @@ Use the data API above instead.</code></pre>
       document.getElementById('input-folder').style.display = mode === 'folder' ? '' : 'none';
       document.getElementById('tab-files').classList.toggle('active', mode === 'files');
       document.getElementById('tab-folder').classList.toggle('active', mode === 'folder');
+    }
+
+    function setSiteMode(mode) {
+      siteMode = mode;
+      document.getElementById('mode-shared').classList.toggle('active', mode === 'shared');
+      document.getElementById('mode-individual').classList.toggle('active', mode === 'individual');
+      document.getElementById('mode-desc').textContent = mode === 'individual'
+        ? 'Each visitor gets their own isolated state — good for forms and per-person submissions.'
+        : 'All visitors contribute to the same state — good for dashboards and collaborative forms.';
     }
 
     publishBtn.addEventListener('click', async () => {
@@ -125,6 +150,7 @@ Use the data API above instead.</code></pre>
       showStatus('Publishing…', null);
 
       const fd = new FormData();
+      fd.append('mode', siteMode);
       for (const f of files) {
         fd.append('files', f);
         if (isFolder) fd.append('paths', f.webkitRelativePath);
@@ -159,17 +185,26 @@ Use the data API above instead.</code></pre>
           container.innerHTML = '<p class="empty">No sites published yet.</p>';
           return;
         }
-        const rows = sites.map(s => `
-          <tr>
+        const rows = sites.map(s => {
+          const modeBadge = s.mode === 'individual'
+            ? '<span class="badge badge-individual">Individual</span>'
+            : '<span class="badge badge-shared">Shared</span>';
+          const visitorsHtml = s.unique_visitors > 0
+            ? `<a class="visitors-link" href="/visitors.html?site=${encodeURIComponent(s.name)}">${s.unique_visitors} unique</a>`
+            : `<span style="color:#bbb">0</span>`;
+          return `<tr>
             <td><a href="/viewer.html?site=${s.name}">${s.name}</a></td>
+            <td>${modeBadge}</td>
             <td>${fmtDate(s.created_at)}</td>
             <td>${fmtDate(s.updated_at)}</td>
             <td>${s.visit_count}</td>
+            <td>${visitorsHtml}</td>
             <td><button class="delete-btn" title="Delete site" onclick="deleteSite('${s.name}')">✕</button></td>
-          </tr>`).join('');
+          </tr>`;
+        }).join('');
         container.innerHTML = `
           <table>
-            <thead><tr><th>Name</th><th>Created</th><th>Updated</th><th>Visits</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Mode</th><th>Created</th><th>Updated</th><th>Visits</th><th>Visitors</th><th></th></tr></thead>
             <tbody>${rows}</tbody>
           </table>`;
       } catch (e) {

@@ -30,6 +30,12 @@
     .save-status.unsaved { color: #c08000; }
     .save-status.saving  { color: #888; }
     .save-status.saved   { color: #1a7a1a; }
+
+    .identity-btn {
+      font-size: 0.8rem; color: #555; background: none; border: 1px solid #ddd;
+      border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; white-space: nowrap;
+    }
+    .identity-btn:hover { border-color: #aaa; color: #222; background: #f5f5f5; }
   </style>
 </head>
 <body>
@@ -43,6 +49,7 @@
 
   <div class="bottombar">
     <span class="save-status" id="save-status"></span>
+    <button class="identity-btn" id="identity-btn" onclick="promptName()"></button>
   </div>
 
   <script>
@@ -58,19 +65,62 @@
     document.getElementById('site-name-label').textContent = site;
     document.getElementById('open-link').href = '/' + site + '/';
 
+    // --- User identity (mirrors SDK logic; viewer is not a published page so SDK isn't injected) ---
+    function getOrCreateId() {
+      let id = localStorage.getItem('echelon_user_id');
+      if (!id) {
+        id = typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : Date.now().toString(36) + Math.random().toString(36).slice(2);
+        localStorage.setItem('echelon_user_id', id);
+      }
+      return id;
+    }
+    const userId = getOrCreateId();
+    let userName = localStorage.getItem('echelon_user_name') || '';
+
+    function renderIdentityBtn() {
+      document.getElementById('identity-btn').textContent =
+        userName ? ('You: ' + userName) : 'You: Anonymous · Set name';
+    }
+    renderIdentityBtn();
+
+    function promptName() {
+      const name = prompt('Your display name (shown to site admins):', userName);
+      if (name === null) return;
+      userName = name.trim();
+      localStorage.setItem('echelon_user_name', userName);
+      renderIdentityBtn();
+    }
+
+    // --- Init: fetch site mode, then load iframe ---
     const frame = document.getElementById('viewer-frame');
     const saveStatus = document.getElementById('save-status');
-    const saveBtn = document.getElementById('save-btn');
     let saveTimer = null;
+    let stateUrl = null;
 
-    frame.src = '/' + site + '/';
+    async function init() {
+      let isIndividual = false;
+      try {
+        const info = await fetch('/_api/sites/' + encodeURIComponent(site)).then(r => r.json());
+        isIndividual = info.mode === 'individual';
+      } catch (_) {}
+
+      stateUrl = isIndividual
+        ? '/_api/state/' + encodeURIComponent(site) + '?user=' + encodeURIComponent(userId)
+        : '/_api/state/' + encodeURIComponent(site);
+
+      frame.src = '/' + site + '/';
+    }
+
+    init();
 
     frame.addEventListener('load', async () => {
       const doc = frame.contentDocument;
-      if (!doc) return; // cross-origin guard (shouldn't happen here)
+      if (!doc) return;
 
       try {
-        const state = await fetch('/_api/state/' + encodeURIComponent(site)).then(r => r.json());
+        const state = await fetch(stateUrl).then(r => r.json());
         if (Object.keys(state).length > 0) {
           applyState(doc, state);
           setStatus('saved', 'Restored saved state');
@@ -94,7 +144,7 @@
       if (!doc) return;
       setStatus('saving', 'Saving…');
       try {
-        await fetch('/_api/state/' + encodeURIComponent(site), {
+        await fetch(stateUrl, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(captureState(doc))
@@ -120,7 +170,7 @@
 
     function applyState(doc, state) {
       doc.querySelectorAll('input, textarea, select').forEach((el, i) => {
-        if (el.type === 'file') return; // browsers disallow setting file input values
+        if (el.type === 'file') return;
         const key = el.name || el.id || '_f' + i;
         if (!(key in state)) return;
         if (el.type === 'checkbox' || el.type === 'radio') {

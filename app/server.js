@@ -44,7 +44,27 @@ db.exec(`
     data TEXT NOT NULL,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS user_state (
+    site TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (site, user_id)
+  );
+  CREATE TABLE IF NOT EXISTS visitors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    site TEXT NOT NULL,
+    user_id TEXT NOT NULL DEFAULT '',
+    user_name TEXT DEFAULT '',
+    path TEXT DEFAULT '/',
+    visited_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_visitors_site ON visitors(site);
 `);
+
+// Migrations: add columns to existing tables (silently skip if already present)
+try { db.exec(`ALTER TABLE sites ADD COLUMN mode TEXT DEFAULT 'shared'`); } catch(_) {}
+try { db.exec(`ALTER TABLE entries ADD COLUMN user_id TEXT DEFAULT ''`); } catch(_) {}
 
 const uploadMemory = multer({ storage: multer.memoryStorage() });
 const uploadDisk = multer({ dest: path.join(__dirname, 'tmp') });
@@ -69,14 +89,34 @@ function stripCSPMetaTags(html) {
 }
 
 // Inject Echelon SDK into HTML before </body>
-// Exposes window.Echelon.{save, load, saveState, loadState, uploadFile}
-// Also auto-captures submits on forms with no explicit action URL
+// Exposes window.Echelon.{save, load, saveState, loadState, uploadFile, userId, userName, setName}
+// Also auto-captures submits on forms with data-echelon-form attribute, and tracks page visits
 function injectEchelonSDK(html) {
   const script = `<script>
 (function () {
   var SITE = location.pathname.split('/')[1];
+
+  // Loose identity: UUID persisted in localStorage, shared across all sites on this platform
+  var userId = (function () {
+    var id = localStorage.getItem('echelon_user_id');
+    if (!id) {
+      id = typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : Date.now().toString(36) + Math.random().toString(36).slice(2);
+      localStorage.setItem('echelon_user_id', id);
+    }
+    return id;
+  })();
+  var userName = localStorage.getItem('echelon_user_name') || '';
+
   window.Echelon = {
     site: SITE,
+    userId: userId,
+    userName: userName,
+    setName: function (name) {
+      localStorage.setItem('echelon_user_name', name);
+      window.Echelon.userName = name;
+    },
     save: function (data) {
       return fetch('/_api/data/' + SITE, {
         method: 'POST',
@@ -88,14 +128,15 @@ function injectEchelonSDK(html) {
       return fetch('/_api/data/' + SITE).then(function (r) { return r.json(); });
     },
     saveState: function (data) {
-      return fetch('/_api/state/' + SITE, {
+      return fetch('/_api/state/' + SITE + '?user=' + encodeURIComponent(userId), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       }).then(function (r) { return r.json(); });
     },
     loadState: function () {
-      return fetch('/_api/state/' + SITE).then(function (r) { return r.json(); });
+      return fetch('/_api/state/' + SITE + '?user=' + encodeURIComponent(userId))
+        .then(function (r) { return r.json(); });
     },
     uploadFile: function (file, folder) {
       var fd = new FormData();
@@ -107,14 +148,27 @@ function injectEchelonSDK(html) {
     }
   };
 
-  // Auto-capture submits only on forms with data-echelon-auto attribute
-  // Forms with their own submit logic are unaffected unless they opt in
+  // Auto-capture submits only on forms with data-echelon-form attribute
   document.addEventListener('DOMContentLoaded', function () {
-    document.querySelectorAll('form[data-echelon-auto]').forEach(function (form) {
+    // Track this page visit (fire-and-forget)
+    fetch('/_api/visit/' + SITE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, user_name: userName, path: location.pathname })
+    });
+
+    document.querySelectorAll('form[data-echelon-form]').forEach(function (form) {
       form.addEventListener('submit', function (e) {
         e.preventDefault();
         var data = {};
-        new FormData(form).forEach(function (val, key) { data[key] = val; });
+        new FormData(form).forEach(function (val, key) {
+          if (Object.prototype.hasOwnProperty.call(data, key)) {
+            if (Array.isArray(data[key])) { data[key].push(val); }
+            else { data[key] = [data[key], val]; }
+          } else {
+            data[key] = val;
+          }
+        });
         Echelon.save(data);
       });
     });
@@ -187,11 +241,12 @@ app.post('/_api/sites/:name', uploadMemory.array('files'), async (req, res) => {
   }
 
   // Upsert into sites table
+  const mode = req.body && req.body.mode === 'individual' ? 'individual' : 'shared';
   db.prepare(`
-    INSERT INTO sites (name, created_at, updated_at, visit_count)
-    VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0)
-    ON CONFLICT(name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
-  `).run(name);
+    INSERT INTO sites (name, created_at, updated_at, visit_count, mode)
+    VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, ?)
+    ON CONFLICT(name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP, mode = excluded.mode
+  `).run(name, mode);
 
   // Auto-generate index.html if none was uploaded
   const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.avif', '.bmp']);
@@ -236,10 +291,20 @@ app.post('/_api/sites/:name', uploadMemory.array('files'), async (req, res) => {
   res.json({ ok: true, url: `/${name}/` });
 });
 
-// GET /_api/sites — list all sites
+// GET /_api/sites — list all sites with unique visitor counts
 app.get('/_api/sites', (req, res) => {
-  const rows = db.prepare('SELECT name, created_at, updated_at, visit_count FROM sites ORDER BY created_at DESC').all();
-  res.json(rows);
+  const rows = db.prepare('SELECT name, created_at, updated_at, visit_count, mode FROM sites ORDER BY created_at DESC').all();
+  const counts = db.prepare('SELECT site, COUNT(DISTINCT user_id) as unique_visitors FROM visitors GROUP BY site').all();
+  const countMap = Object.fromEntries(counts.map(r => [r.site, r.unique_visitors]));
+  res.json(rows.map(r => ({ ...r, unique_visitors: countMap[r.name] || 0 })));
+});
+
+// GET /_api/sites/:name — single site metadata
+app.get('/_api/sites/:name', (req, res) => {
+  const { name } = req.params;
+  const row = db.prepare('SELECT name, created_at, updated_at, visit_count, mode FROM sites WHERE name = ?').get(name);
+  if (!row) return res.status(404).json({ error: 'not found' });
+  res.json(row);
 });
 
 // DELETE /_api/sites/:name — remove a site and all its data
@@ -269,21 +334,60 @@ app.get('/_api/data/:site', (req, res) => {
   res.json(entries);
 });
 
-// GET /_api/state/:site — get saved form state
+// GET /_api/state/:site — get saved form state (shared or per-user)
 app.get('/_api/state/:site', (req, res) => {
   const { site } = req.params;
-  const row = db.prepare('SELECT data FROM state WHERE site = ?').get(site);
-  res.json(row ? JSON.parse(row.data) : {});
+  const user = req.query.user || '';
+  if (user) {
+    const row = db.prepare('SELECT data FROM user_state WHERE site = ? AND user_id = ?').get(site, user);
+    res.json(row ? JSON.parse(row.data) : {});
+  } else {
+    const row = db.prepare('SELECT data FROM state WHERE site = ?').get(site);
+    res.json(row ? JSON.parse(row.data) : {});
+  }
 });
 
-// PUT /_api/state/:site — upsert form state
+// PUT /_api/state/:site — upsert form state (shared or per-user)
 app.put('/_api/state/:site', (req, res) => {
   const { site } = req.params;
-  db.prepare(`
-    INSERT INTO state (site, data, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(site) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP
-  `).run(site, JSON.stringify(req.body));
+  const user = req.query.user || '';
+  if (user) {
+    db.prepare(`
+      INSERT INTO user_state (site, user_id, data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(site, user_id) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP
+    `).run(site, user, JSON.stringify(req.body));
+  } else {
+    db.prepare(`
+      INSERT INTO state (site, data, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(site) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP
+    `).run(site, JSON.stringify(req.body));
+  }
   res.json({ ok: true });
+});
+
+// POST /_api/visit/:site — record a page visit
+app.post('/_api/visit/:site', (req, res) => {
+  const { site } = req.params;
+  const { user_id = '', user_name = '', path = '/' } = req.body || {};
+  db.prepare('INSERT INTO visitors (site, user_id, user_name, path) VALUES (?, ?, ?, ?)').run(site, user_id, user_name, path);
+  res.json({ ok: true });
+});
+
+// GET /_api/visitors/:site — list visitors grouped by user
+app.get('/_api/visitors/:site', (req, res) => {
+  const { site } = req.params;
+  const rows = db.prepare('SELECT user_id, user_name, path, visited_at FROM visitors WHERE site = ? ORDER BY visited_at ASC').all(site);
+  const byUser = {};
+  for (const r of rows) {
+    if (!byUser[r.user_id]) byUser[r.user_id] = { user_id: r.user_id, user_name: r.user_name || '', visit_count: 0, last_visit: r.visited_at, pages: [] };
+    const u = byUser[r.user_id];
+    u.visit_count++;
+    u.last_visit = r.visited_at;
+    if (r.user_name && !u.user_name) u.user_name = r.user_name;
+    else if (r.user_name) u.user_name = r.user_name;
+    if (!u.pages.includes(r.path)) u.pages.push(r.path);
+  }
+  res.json(Object.values(byUser).sort((a, b) => b.last_visit.localeCompare(a.last_visit)));
 });
 
 // POST /_api/files/:site?folder=<id> — upload a file, optional subfolder for grouping

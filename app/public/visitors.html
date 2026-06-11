@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visitors — Echelon Publish</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; padding: 2rem; }
+    .topbar { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 2rem; }
+    .topbar a { color: #555; text-decoration: none; font-size: 0.9rem; }
+    .topbar a:hover { color: #1a1a1a; }
+    h1 { font-size: 1.3rem; }
+    .subtitle { color: #666; font-size: 0.9rem; margin-top: 0.15rem; }
+    .card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 1.5rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 2px solid #eee; color: #555; font-weight: 600; }
+    td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    .uid { font-size: 0.75rem; color: #aaa; font-family: 'SF Mono', Menlo, monospace; }
+    .name { font-weight: 600; }
+    .anon { color: #999; font-style: italic; }
+    .pages { font-size: 0.8rem; color: #555; }
+    .pages span { display: inline-block; background: #f0f0f0; border-radius: 3px; padding: 0.1rem 0.4rem; margin: 0.1rem 0.1rem 0 0; }
+    .empty { color: #888; font-size: 0.9rem; padding: 1rem 0; }
+    .count { display: inline-block; background: #e8f4ff; color: #1a5fb4; border-radius: 10px; font-size: 0.75rem; font-weight: 600; padding: 0.1rem 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a href="/">← Sites</a>
+    <div>
+      <h1 id="page-title">Visitors</h1>
+      <p class="subtitle" id="page-subtitle"></p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="visitors-container"><p class="empty">Loading…</p></div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const site = params.get('site');
+
+    if (!site) {
+      document.body.innerHTML = '<p style="padding:2rem;font-family:system-ui">No site specified. <a href="/">Go back</a></p>';
+      throw new Error('no site');
+    }
+
+    document.title = 'Visitors: ' + site + ' — Echelon Publish';
+    document.getElementById('page-title').textContent = 'Visitors: ' + site;
+
+    async function load() {
+      const container = document.getElementById('visitors-container');
+      try {
+        const visitors = await fetch('/_api/visitors/' + encodeURIComponent(site)).then(r => r.json());
+        document.getElementById('page-subtitle').textContent =
+          visitors.length === 0 ? 'No visitors yet.' :
+          visitors.length === 1 ? '1 unique visitor' :
+          visitors.length + ' unique visitors';
+
+        if (!visitors.length) {
+          container.innerHTML = '<p class="empty">No visitors recorded yet. Visitors are logged when they view a published page.</p>';
+          return;
+        }
+
+        const rows = visitors.map(v => {
+          const nameHtml = v.user_name
+            ? `<span class="name">${escHtml(v.user_name)}</span>`
+            : `<span class="anon">Anonymous</span>`;
+          const uid = v.user_id ? v.user_id.slice(0, 12) + '…' : '—';
+          const pages = v.pages.map(p => `<span>${escHtml(p)}</span>`).join('');
+          return `<tr>
+            <td>${nameHtml}<br><span class="uid">${escHtml(uid)}</span></td>
+            <td><span class="count">${v.visit_count}</span></td>
+            <td>${escHtml(fmtDate(v.last_visit))}</td>
+            <td><div class="pages">${pages}</div></td>
+          </tr>`;
+        }).join('');
+
+        container.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>Visitor</th>
+                <th>Visits</th>
+                <th>Last seen</th>
+                <th>Pages</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      } catch (e) {
+        container.innerHTML = '<p class="empty">Failed to load visitor data.</p>';
+      }
+    }
+
+    function fmtDate(iso) {
+      if (!iso) return '—';
+      return new Date(iso).toLocaleString();
+    }
+
+    function escHtml(str) {
+      return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    load();
+  </script>
+</body>
+</html>

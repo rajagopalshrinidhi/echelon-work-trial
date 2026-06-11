@@ -1,0 +1,11 @@
+{
+  "name": "echelon-cli",
+  "version": "1.0.0",
+  "description": "Publish files to Echelon from the terminal",
+  "bin": {
+    "echelon": "./echelon.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

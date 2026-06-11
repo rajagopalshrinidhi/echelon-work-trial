@@ -26,6 +26,56 @@ The admin UI (`public/index.html`) has three cards:
 - **Upload a file** — upload a single file to `/_api/files/:site` and get a stable URL back with a Copy button. Useful for images and attachments referenced by published pages.
 - **Published sites** — lists all sites with creation date, last updated, and visit count. Click a site name to open the data viewer. Delete removes the site directory and its DB record.
 
+## Publish from the terminal
+
+No admin UI needed — publish directly with `curl` or the included CLI.
+
+### curl (zero setup)
+
+```bash
+# Single file
+curl -F "files=@report.html" http://<host>/_api/sites/my-report
+
+# Multiple files
+curl -F "files=@index.html" -F "files=@style.css" http://<host>/_api/sites/my-site
+
+# Returns: {"ok":true,"url":"/my-site/"}
+```
+
+### CLI (`cli/echelon.js`)
+
+```bash
+# Single file — site name defaults to filename
+node cli/echelon.js publish report.html --host http://localhost:3000
+
+# Explicit name
+node cli/echelon.js publish report.html --name quarterly-report --host http://localhost:3000
+
+# Entire folder
+node cli/echelon.js publish ./dist --name my-app --host http://localhost:3000
+
+# Watch mode — republishes on every save (~500 ms debounce)
+node cli/echelon.js publish report.html --name my-report --watch
+
+# Set host via env so you don't repeat it
+export ECHELON_HOST=http://myserver
+node cli/echelon.js publish report.html --name my-report
+```
+
+**Config file** — add `echelon.json` next to your files to set defaults:
+```json
+{ "name": "quarterly-report", "host": "http://myserver" }
+```
+Then just run `node cli/echelon.js publish report.html`.
+
+**Jupyter notebooks:**
+```bash
+jupyter nbconvert --to html --embed-resources notebook.ipynb && \
+  node cli/echelon.js publish notebook.html --name my-analysis
+```
+
+Requires Node 18+ (uses native `fetch` and `FormData`). No `npm install` needed.
+
 ## Authoring HTML with Claude
 
 The fastest way for users to create forms that work on this platform is to use a Claude Project pre-configured with the platform's authoring rules. Claude generates a correct, self-contained HTML file that can be uploaded directly to the admin UI.
@@ -57,12 +107,13 @@ window.Echelon provides:
 Use one of two patterns depending on what the form needs:
 
 PATTERN A — Zero JS (simple collection forms)
-  Add data-echelon-auto to the <form> element. The platform intercepts the submit
+  Add data-echelon-form to the <form> element. The platform intercepts the submit
   event, serializes all named fields to JSON, and saves to the database automatically.
   Do not set an action attribute — it will be silently suppressed.
   Every input, select, and textarea must have a name attribute or it will be skipped.
+  Multi-value fields (checkboxes sharing a name) are collected into an array.
   Example:
-    <form data-echelon-auto>
+    <form data-echelon-form>
       <input name="requester" type="text">
       <button type="submit">Submit</button>
     </form>
@@ -85,7 +136,7 @@ Rules:
 - Never reference APIs, backends, or URLs other than Echelon.* methods.
 - Never use localStorage or sessionStorage — all sites share the same browser
   origin, so storage keys collide across sites. Use Echelon.saveState() instead.
-- For Pattern A, omit the action attribute entirely or set action="#".
+- For Pattern A, use data-echelon-form on the form element. Omit the action attribute entirely or set action="#".
 - For Pattern B, always call Echelon.saveState() on input/change events for
   any form longer than a few fields.
 - Do not import the Echelon SDK — it is injected automatically on publish.

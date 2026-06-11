@@ -68,6 +68,65 @@ function stripCSPMetaTags(html) {
   return html.replace(/<meta[^>]+http-equiv\s*=\s*["']?Content-Security-Policy["']?[^>]*>/gi, '');
 }
 
+// Inject Echelon SDK into HTML before </body>
+// Exposes window.Echelon.{save, load, saveState, loadState, uploadFile}
+// Also auto-captures submits on forms with no explicit action URL
+function injectEchelonSDK(html) {
+  const script = `<script>
+(function () {
+  var SITE = location.pathname.split('/')[1];
+  window.Echelon = {
+    site: SITE,
+    save: function (data) {
+      return fetch('/_api/data/' + SITE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      }).then(function (r) { return r.json(); });
+    },
+    load: function () {
+      return fetch('/_api/data/' + SITE).then(function (r) { return r.json(); });
+    },
+    saveState: function (data) {
+      return fetch('/_api/state/' + SITE, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      }).then(function (r) { return r.json(); });
+    },
+    loadState: function () {
+      return fetch('/_api/state/' + SITE).then(function (r) { return r.json(); });
+    },
+    uploadFile: function (file, folder) {
+      var fd = new FormData();
+      fd.append('file', file);
+      var url = folder
+        ? '/_api/files/' + SITE + '?folder=' + encodeURIComponent(folder)
+        : '/_api/files/' + SITE;
+      return fetch(url, { method: 'POST', body: fd }).then(function (r) { return r.json(); });
+    }
+  };
+
+  // Auto-capture submits only on forms with data-echelon-auto attribute
+  // Forms with their own submit logic are unaffected unless they opt in
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('form[data-echelon-auto]').forEach(function (form) {
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var data = {};
+        new FormData(form).forEach(function (val, key) { data[key] = val; });
+        Echelon.save(data);
+      });
+    });
+  });
+})();
+<\/script>`;
+
+  return html.includes('</body>')
+    ? html.replace('</body>', script + '\n</body>')
+    : html + '\n' + script;
+}
+
 // POST /_api/sites/:name — publish/replace a site
 app.post('/_api/sites/:name', uploadMemory.array('files'), async (req, res) => {
   const { name } = req.params;
@@ -97,7 +156,7 @@ app.post('/_api/sites/:name', uploadMemory.array('files'), async (req, res) => {
       fs.mkdirSync(path.dirname(destPath), { recursive: true });
       let content = entry.getData();
       if (entryName.endsWith('.html')) {
-        content = Buffer.from(stripCSPMetaTags(content.toString('utf8')), 'utf8');
+        content = Buffer.from(injectEchelonSDK(stripCSPMetaTags(content.toString('utf8'))), 'utf8');
       }
       fs.writeFileSync(destPath, content);
     }
@@ -119,7 +178,7 @@ app.post('/_api/sites/:name', uploadMemory.array('files'), async (req, res) => {
       }
       let content = file.buffer;
       if (relPath.endsWith('.html')) {
-        content = Buffer.from(stripCSPMetaTags(content.toString('utf8')), 'utf8');
+        content = Buffer.from(injectEchelonSDK(stripCSPMetaTags(content.toString('utf8'))), 'utf8');
       }
       const destPath = path.join(siteDir, relPath);
       fs.mkdirSync(path.dirname(destPath), { recursive: true });
@@ -134,12 +193,43 @@ app.post('/_api/sites/:name', uploadMemory.array('files'), async (req, res) => {
     ON CONFLICT(name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
   `).run(name);
 
-  // If no index.html was uploaded but exactly one HTML file was, create index.html from it
+  // Auto-generate index.html if none was uploaded
+  const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.avif', '.bmp']);
   const written = fs.readdirSync(siteDir);
   const hasIndex = written.includes('index.html');
   const htmlFiles = written.filter(f => f.endsWith('.html'));
+  const imageFiles = written.filter(f => IMAGE_EXTS.has(path.extname(f).toLowerCase()));
+  const pdfFiles = written.filter(f => path.extname(f).toLowerCase() === '.pdf');
+
   if (!hasIndex && htmlFiles.length === 1) {
+    // Single HTML file — make it the index
     fs.copyFileSync(path.join(siteDir, htmlFiles[0]), path.join(siteDir, 'index.html'));
+  } else if (!hasIndex && htmlFiles.length === 0) {
+    // No HTML at all — generate a viewer for images and/or PDFs
+    if (pdfFiles.length === 1 && imageFiles.length === 0) {
+      // Full-page PDF embed
+      fs.writeFileSync(path.join(siteDir, 'index.html'),
+        `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${pdfFiles[0]}</title>` +
+        `<style>*{margin:0;padding:0}html,body{height:100%}` +
+        `embed{display:block;width:100%;height:100%}</style></head>` +
+        `<body><embed src="${pdfFiles[0]}" type="application/pdf"></body></html>`
+      );
+    } else if (imageFiles.length > 0) {
+      // Image gallery (+ PDF links if mixed)
+      const imgs = imageFiles.map(f =>
+        `<img src="${f}" alt="${f}">`
+      ).join('\n');
+      const pdfs = pdfFiles.map(f =>
+        `<p class="pdf-link"><a href="${f}">📄 ${f}</a></p>`
+      ).join('\n');
+      fs.writeFileSync(path.join(siteDir, 'index.html'),
+        `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Files</title>` +
+        `<style>body{margin:0;padding:24px;background:#111;color:#eee;font-family:system-ui,sans-serif}` +
+        `img{display:block;max-width:100%;margin-bottom:20px;border-radius:4px}` +
+        `.pdf-link{margin-top:16px}a{color:#7eb8f7}</style></head>` +
+        `<body>${imgs}${pdfs}</body></html>`
+      );
+    }
   }
 
   log('info', 'site published', { site: name, files: files.map(f => f.originalname) });

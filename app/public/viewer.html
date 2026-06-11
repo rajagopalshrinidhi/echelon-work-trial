@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Viewer — Echelon Publish</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { display: flex; flex-direction: column; height: 100vh; font-family: system-ui, sans-serif; background: #f5f5f5; }
+
+    .topbar {
+      display: flex; align-items: center; gap: 1rem;
+      padding: 0.6rem 1rem; background: #1a1a1a; color: #fff;
+      font-size: 0.85rem; flex-shrink: 0;
+    }
+    .topbar a { color: #aaa; text-decoration: none; }
+    .topbar a:hover { color: #fff; }
+    .topbar .site-name { font-weight: 600; color: #fff; flex: 1; }
+    .open-link { font-size: 0.8rem; color: #aaa; text-decoration: none; }
+    .open-link:hover { color: #fff; }
+
+    iframe { flex: 1; border: none; width: 100%; background: #fff; }
+
+    .bottombar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0.65rem 1rem; background: #fff; border-top: 1px solid #ddd;
+      flex-shrink: 0;
+    }
+    .save-status { font-size: 0.8rem; color: #999; }
+    .save-status.unsaved { color: #c08000; }
+    .save-status.saving  { color: #888; }
+    .save-status.saved   { color: #1a7a1a; }
+    button {
+      background: #1a1a1a; color: #fff; border: none; border-radius: 6px;
+      padding: 0.5rem 1.25rem; font-size: 0.9rem; cursor: pointer;
+    }
+    button:hover { background: #333; }
+    button:disabled { background: #999; cursor: default; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a href="/">← Admin</a>
+    <span class="site-name" id="site-name-label"></span>
+    <a class="open-link" id="open-link" target="_blank">Open in new tab ↗</a>
+  </div>
+
+  <iframe id="viewer-frame"></iframe>
+
+  <div class="bottombar">
+    <span class="save-status" id="save-status"></span>
+    <button id="save-btn">Save</button>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const site = params.get('site');
+
+    if (!site) {
+      document.body.innerHTML = '<p style="padding:2rem;font-family:system-ui">No site specified. <a href="/">Go back</a></p>';
+      throw new Error('no site');
+    }
+
+    document.title = site + ' — Echelon Publish';
+    document.getElementById('site-name-label').textContent = site;
+    document.getElementById('open-link').href = '/' + site + '/';
+
+    const frame = document.getElementById('viewer-frame');
+    const saveStatus = document.getElementById('save-status');
+    const saveBtn = document.getElementById('save-btn');
+    let saveTimer = null;
+
+    frame.src = '/' + site + '/';
+
+    frame.addEventListener('load', async () => {
+      const doc = frame.contentDocument;
+      if (!doc) return; // cross-origin guard (shouldn't happen here)
+
+      try {
+        const state = await fetch('/_api/state/' + encodeURIComponent(site)).then(r => r.json());
+        if (Object.keys(state).length > 0) {
+          applyState(doc, state);
+          setStatus('saved', 'Restored saved state');
+          setTimeout(() => setStatus('', ''), 2000);
+        }
+      } catch (_) {}
+
+      doc.addEventListener('input', onFieldChange);
+      doc.addEventListener('change', onFieldChange);
+    });
+
+    function onFieldChange(e) {
+      if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+      setStatus('unsaved', 'Unsaved changes');
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(doSave, 1500);
+    }
+
+    async function doSave() {
+      const doc = frame.contentDocument;
+      if (!doc) return;
+      setStatus('saving', 'Saving…');
+      try {
+        await fetch('/_api/state/' + encodeURIComponent(site), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(captureState(doc))
+        });
+        setStatus('saved', 'Saved');
+      } catch (_) {
+        setStatus('unsaved', 'Save failed');
+      }
+    }
+
+    saveBtn.addEventListener('click', async () => {
+      clearTimeout(saveTimer);
+      saveBtn.disabled = true;
+      await doSave();
+      saveBtn.disabled = false;
+    });
+
+    function captureState(doc) {
+      const state = {};
+      doc.querySelectorAll('input, textarea, select').forEach((el, i) => {
+        const key = el.name || el.id || '_f' + i;
+        if (el.type === 'checkbox' || el.type === 'radio') {
+          state[key] = el.checked;
+        } else {
+          state[key] = el.value;
+        }
+      });
+      return state;
+    }
+
+    function applyState(doc, state) {
+      doc.querySelectorAll('input, textarea, select').forEach((el, i) => {
+        const key = el.name || el.id || '_f' + i;
+        if (!(key in state)) return;
+        if (el.type === 'checkbox' || el.type === 'radio') {
+          el.checked = state[key];
+        } else {
+          el.value = state[key];
+        }
+      });
+    }
+
+    function setStatus(cls, text) {
+      saveStatus.textContent = text;
+      saveStatus.className = 'save-status' + (cls ? ' ' + cls : '');
+    }
+  </script>
+</body>
+</html>

@@ -124,7 +124,7 @@ Use the data API above instead.</code></pre>
         }
         const rows = sites.map(s => `
           <tr>
-            <td><a href="/${s.name}/" target="_blank">${s.name}</a></td>
+            <td><a href="/viewer.html?site=${s.name}">${s.name}</a></td>
             <td>${fmtDate(s.created_at)}</td>
             <td>${fmtDate(s.updated_at)}</td>
             <td>${s.visit_count}</td>

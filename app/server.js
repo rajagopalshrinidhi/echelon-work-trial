@@ -39,6 +39,11 @@ db.exec(`
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
     visit_count INTEGER DEFAULT 0
   );
+  CREATE TABLE IF NOT EXISTS state (
+    site TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 const uploadMemory = multer({ storage: multer.memoryStorage() });
@@ -148,6 +153,23 @@ app.get('/_api/data/:site', (req, res) => {
   const rows = db.prepare('SELECT data, created_at FROM entries WHERE site = ? ORDER BY id ASC').all(site);
   const entries = rows.map(row => ({ ...JSON.parse(row.data), created_at: row.created_at }));
   res.json(entries);
+});
+
+// GET /_api/state/:site — get saved form state
+app.get('/_api/state/:site', (req, res) => {
+  const { site } = req.params;
+  const row = db.prepare('SELECT data FROM state WHERE site = ?').get(site);
+  res.json(row ? JSON.parse(row.data) : {});
+});
+
+// PUT /_api/state/:site — upsert form state
+app.put('/_api/state/:site', (req, res) => {
+  const { site } = req.params;
+  db.prepare(`
+    INSERT INTO state (site, data, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(site) DO UPDATE SET data = excluded.data, updated_at = CURRENT_TIMESTAMP
+  `).run(site, JSON.stringify(req.body));
+  res.json({ ok: true });
 });
 
 // POST /_api/files/:site — upload a file

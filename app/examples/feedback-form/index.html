@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Feedback</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; padding: 2rem; max-width: 640px; margin: 0 auto; }
+    h1 { font-size: 1.4rem; margin-bottom: 1.5rem; }
+    h2 { font-size: 1.1rem; margin: 1.5rem 0 1rem; }
+    .form-card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 1.5rem; margin-bottom: 2rem; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.3rem; color: #444; }
+    input[type="text"], textarea {
+      width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #ccc;
+      border-radius: 6px; font-size: 0.9rem; margin-bottom: 1rem; font-family: inherit;
+    }
+    textarea { resize: vertical; min-height: 80px; }
+    input[type="file"] { margin-bottom: 1rem; font-size: 0.9rem; }
+    button {
+      background: #1a1a1a; color: #fff; border: none; border-radius: 6px;
+      padding: 0.55rem 1.25rem; font-size: 0.9rem; cursor: pointer;
+    }
+    button:hover { background: #333; }
+    button:disabled { background: #999; cursor: default; }
+    #status { margin-top: 0.75rem; font-size: 0.9rem; }
+    .entry { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    .entry-meta { font-size: 0.78rem; color: #888; margin-top: 0.5rem; }
+    .entry img { max-width: 100%; border-radius: 6px; margin-top: 0.75rem; display: block; }
+    .entry .name { font-weight: 600; }
+    .entry .comment { margin-top: 0.25rem; }
+    #entries-list .empty { color: #888; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>Leave Feedback</h1>
+
+  <div class="form-card">
+    <label for="inp-name">Your name</label>
+    <input type="text" id="inp-name" placeholder="Alex" autocomplete="off">
+    <label for="inp-comment">Comment</label>
+    <textarea id="inp-comment" placeholder="What's on your mind?"></textarea>
+    <label for="inp-photo">Photo (optional)</label>
+    <input type="file" id="inp-photo" accept="image/*">
+    <button id="submit-btn">Submit</button>
+    <div id="status"></div>
+  </div>
+
+  <h2>All feedback</h2>
+  <div id="entries-list"><p class="empty">Loading…</p></div>
+
+  <script>
+    const SITE = 'feedback-form';
+
+    const submitBtn = document.getElementById('submit-btn');
+    const statusEl = document.getElementById('status');
+
+    submitBtn.addEventListener('click', async () => {
+      const name = document.getElementById('inp-name').value.trim();
+      const comment = document.getElementById('inp-comment').value.trim();
+      const photoFile = document.getElementById('inp-photo').files[0];
+
+      if (!name || !comment) {
+        statusEl.textContent = 'Name and comment are required.';
+        return;
+      }
+
+      submitBtn.disabled = true;
+      statusEl.textContent = 'Submitting…';
+
+      try {
+        let photoUrl = null;
+        if (photoFile) {
+          const fd = new FormData();
+          fd.append('file', photoFile);
+          const uploadRes = await fetch(`/_api/files/${SITE}`, { method: 'POST', body: fd });
+          const uploadJson = await uploadRes.json();
+          photoUrl = uploadJson.url || null;
+        }
+
+        await fetch(`/_api/data/${SITE}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, comment, photo: photoUrl })
+        });
+
+        document.getElementById('inp-name').value = '';
+        document.getElementById('inp-comment').value = '';
+        document.getElementById('inp-photo').value = '';
+        statusEl.textContent = 'Thanks for the feedback!';
+
+        await loadEntries();
+      } catch (e) {
+        statusEl.textContent = 'Error: ' + e.message;
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+
+    async function loadEntries() {
+      const list = document.getElementById('entries-list');
+      try {
+        const entries = await fetch(`/_api/data/${SITE}`).then(r => r.json());
+        if (!entries.length) {
+          list.innerHTML = '<p class="empty">No feedback yet. Be the first!</p>';
+          return;
+        }
+        list.innerHTML = entries.slice().reverse().map(e => `
+          <div class="entry">
+            <div class="name">${esc(e.name)}</div>
+            <div class="comment">${esc(e.comment)}</div>
+            ${e.photo ? `<img src="${esc(e.photo)}" alt="photo">` : ''}
+            <div class="entry-meta">${fmtDate(e.created_at)}</div>
+          </div>`).join('');
+      } catch (err) {
+        list.innerHTML = '<p class="empty">Failed to load entries.</p>';
+      }
+    }
+
+    function esc(str) {
+      return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function fmtDate(iso) {
+      if (!iso) return '';
+      return new Date(iso).toLocaleString();
+    }
+
+    loadEntries();
+  </script>
+</body>
+</html>

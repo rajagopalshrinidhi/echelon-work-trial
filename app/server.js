@@ -102,13 +102,26 @@ app.post('/_api/sites/:name', uploadMemory.array('files'), async (req, res) => {
       fs.writeFileSync(destPath, content);
     }
   } else {
-    // Flat file list
-    for (const file of files) {
+    // Flat files or folder upload (paths[] array carries relative paths from webkitdirectory)
+    const rawPaths = req.body && req.body.paths;
+    const paths = rawPaths ? (Array.isArray(rawPaths) ? rawPaths : [rawPaths]) : null;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      let relPath;
+      if (paths && paths[i]) {
+        // webkitRelativePath looks like "folder-name/css/style.css" — strip top-level folder name
+        const parts = paths[i].split('/');
+        const inner = parts.slice(1).filter(p => p && p !== '..' && p !== '.');
+        relPath = inner.length ? inner.join('/') : path.basename(file.originalname);
+      } else {
+        relPath = file.originalname;
+      }
       let content = file.buffer;
-      if (file.originalname.endsWith('.html')) {
+      if (relPath.endsWith('.html')) {
         content = Buffer.from(stripCSPMetaTags(content.toString('utf8')), 'utf8');
       }
-      const destPath = path.join(siteDir, file.originalname);
+      const destPath = path.join(siteDir, relPath);
       fs.mkdirSync(path.dirname(destPath), { recursive: true });
       fs.writeFileSync(destPath, content);
     }

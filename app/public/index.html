@@ -12,6 +12,14 @@
     .card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 1.5rem; margin-bottom: 2rem; }
     h2 { font-size: 1.1rem; margin-bottom: 1rem; }
     label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.35rem; color: #444; }
+    .mode-toggle { display: flex; gap: 0; margin-bottom: 1rem; }
+    .mode-btn {
+      background: #f0f0f0; color: #555; border: 1px solid #ccc;
+      padding: 0.35rem 0.9rem; font-size: 0.82rem; cursor: pointer;
+    }
+    .mode-btn:first-child { border-radius: 6px 0 0 6px; }
+    .mode-btn:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+    .mode-btn.active { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
     input[type="text"], input[type="file"] {
       width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #ccc;
       border-radius: 6px; font-size: 0.9rem; margin-bottom: 1rem;
@@ -25,6 +33,20 @@
     #publish-status { margin-top: 0.75rem; font-size: 0.9rem; }
     #publish-status.ok { color: #1a7a1a; }
     #publish-status.err { color: #b00; }
+    #upload-status { margin-top: 0.75rem; font-size: 0.9rem; }
+    #upload-status.ok { color: #1a7a1a; }
+    #upload-status.err { color: #b00; }
+    .url-result { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+    .url-result input {
+      flex: 1; padding: 0.4rem 0.6rem; border: 1px solid #ccc;
+      border-radius: 6px; font-size: 0.82rem; font-family: 'SF Mono', Menlo, monospace;
+      background: #f8f8f8; color: #222; margin-bottom: 0;
+    }
+    .copy-btn {
+      background: #f0f0f0; color: #333; border: 1px solid #ccc;
+      border-radius: 6px; padding: 0.4rem 0.75rem; font-size: 0.82rem; cursor: pointer;
+    }
+    .copy-btn:hover { background: #e0e0e0; }
     table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
     th { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 2px solid #eee; color: #555; font-weight: 600; }
     td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0; }
@@ -51,8 +73,18 @@
     <h2>Publish a site</h2>
     <label for="site-name">Site name (URL slug)</label>
     <input type="text" id="site-name" placeholder="my-site" autocomplete="off" spellcheck="false">
-    <label for="site-files">Files (HTML, CSS, JS, images — or a single .zip)</label>
-    <input type="file" id="site-files" multiple>
+    <div class="mode-toggle">
+      <button type="button" class="mode-btn active" id="tab-files" onclick="setPublishMode('files')">Files</button>
+      <button type="button" class="mode-btn" id="tab-folder" onclick="setPublishMode('folder')">Folder</button>
+    </div>
+    <div id="input-files">
+      <label for="site-files">Files (HTML, CSS, JS, images — or a single .zip)</label>
+      <input type="file" id="site-files" multiple>
+    </div>
+    <div id="input-folder" style="display:none">
+      <label for="site-folder">Select a folder to publish</label>
+      <input type="file" id="site-folder" webkitdirectory>
+    </div>
     <button id="publish-btn">Publish</button>
     <div id="publish-status"></div>
 
@@ -77,6 +109,18 @@ Use the data API above instead.</code></pre>
   </div>
 
   <div class="card">
+    <h2>Upload a file</h2>
+    <label for="upload-site">Site name</label>
+    <input type="text" id="upload-site" placeholder="my-site" autocomplete="off" spellcheck="false">
+    <label for="upload-folder">Folder (optional — groups files, e.g. a session ID)</label>
+    <input type="text" id="upload-folder" placeholder="leave blank or enter a-z 0-9 _ -" autocomplete="off" spellcheck="false">
+    <label for="upload-file">File</label>
+    <input type="file" id="upload-file">
+    <button id="upload-btn">Upload</button>
+    <div id="upload-status"></div>
+  </div>
+
+  <div class="card">
     <h2>Published sites</h2>
     <div id="sites-container"><p class="empty">Loading…</p></div>
   </div>
@@ -84,19 +128,33 @@ Use the data API above instead.</code></pre>
   <script>
     const publishBtn = document.getElementById('publish-btn');
     const statusEl = document.getElementById('publish-status');
+    let publishMode = 'files';
+
+    function setPublishMode(mode) {
+      publishMode = mode;
+      document.getElementById('input-files').style.display = mode === 'files' ? '' : 'none';
+      document.getElementById('input-folder').style.display = mode === 'folder' ? '' : 'none';
+      document.getElementById('tab-files').classList.toggle('active', mode === 'files');
+      document.getElementById('tab-folder').classList.toggle('active', mode === 'folder');
+    }
 
     publishBtn.addEventListener('click', async () => {
       const name = document.getElementById('site-name').value.trim();
-      const files = document.getElementById('site-files').files;
-
       if (!name) { showStatus('Enter a site name.', false); return; }
-      if (!files.length) { showStatus('Select at least one file.', false); return; }
+
+      const isFolder = publishMode === 'folder';
+      const inputEl = document.getElementById(isFolder ? 'site-folder' : 'site-files');
+      const files = inputEl.files;
+      if (!files.length) { showStatus(isFolder ? 'Select a folder.' : 'Select at least one file.', false); return; }
 
       publishBtn.disabled = true;
       showStatus('Publishing…', null);
 
       const fd = new FormData();
-      for (const f of files) fd.append('files', f);
+      for (const f of files) {
+        fd.append('files', f);
+        if (isFolder) fd.append('paths', f.webkitRelativePath);
+      }
 
       try {
         const res = await fetch(`/_api/sites/${encodeURIComponent(name)}`, { method: 'POST', body: fd });
@@ -157,6 +215,63 @@ Use the data API above instead.</code></pre>
     }
 
     loadSites();
+
+    const uploadBtn = document.getElementById('upload-btn');
+    const uploadStatus = document.getElementById('upload-status');
+
+    uploadBtn.addEventListener('click', async () => {
+      const site = document.getElementById('upload-site').value.trim();
+      const folder = document.getElementById('upload-folder').value.trim();
+      const fileInput = document.getElementById('upload-file');
+      const file = fileInput.files[0];
+
+      if (!site) { showUploadStatus('Enter a site name.', false); return; }
+      if (!file) { showUploadStatus('Select a file.', false); return; }
+
+      uploadBtn.disabled = true;
+      showUploadStatus('Uploading…', null);
+
+      const fd = new FormData();
+      fd.append('file', file);
+
+      const url = folder
+        ? `/_api/files/${encodeURIComponent(site)}?folder=${encodeURIComponent(folder)}`
+        : `/_api/files/${encodeURIComponent(site)}`;
+
+      try {
+        const res = await fetch(url, { method: 'POST', body: fd });
+        const json = await res.json();
+        if (json.url) {
+          uploadStatus.innerHTML = `Uploaded — copy the URL below:
+            <div class="url-result">
+              <input type="text" id="uploaded-url" value="${json.url}" readonly>
+              <button class="copy-btn" onclick="copyUploadUrl()">Copy</button>
+            </div>`;
+          uploadStatus.className = 'ok';
+          fileInput.value = '';
+        } else {
+          showUploadStatus(json.error || 'Upload failed.', false);
+        }
+      } catch (e) {
+        showUploadStatus('Network error: ' + e.message, false);
+      } finally {
+        uploadBtn.disabled = false;
+      }
+    });
+
+    function showUploadStatus(msg, ok) {
+      uploadStatus.innerHTML = msg;
+      uploadStatus.className = ok === true ? 'ok' : ok === false ? 'err' : '';
+    }
+
+    function copyUploadUrl() {
+      const input = document.getElementById('uploaded-url');
+      navigator.clipboard.writeText(input.value).then(() => {
+        const btn = input.nextElementSibling;
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = 'Copy', 1500);
+      });
+    }
   </script>
 </body>
 </html>

@@ -84,7 +84,7 @@
   </div>
 
   <script>
-    const SITE = 'upload-demo';
+    const SITE = location.pathname.split('/')[1];
     // crypto.randomUUID() is HTTPS-only; this works on plain HTTP too
     const submissionId = typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()

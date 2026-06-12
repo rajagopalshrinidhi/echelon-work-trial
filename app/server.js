@@ -313,7 +313,10 @@ app.delete('/_api/sites/:name', (req, res) => {
   const siteDir = path.join(SITES_DIR, name);
   if (fs.existsSync(siteDir)) fs.rmSync(siteDir, { recursive: true, force: true });
   db.prepare('DELETE FROM sites WHERE name = ?').run(name);
+  db.prepare('DELETE FROM entries WHERE site = ?').run(name);
   db.prepare('DELETE FROM state WHERE site = ?').run(name);
+  db.prepare('DELETE FROM user_state WHERE site = ?').run(name);
+  db.prepare('DELETE FROM visitors WHERE site = ?').run(name);
   log('info', 'site deleted', { site: name });
   res.json({ ok: true });
 });
